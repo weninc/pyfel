@@ -73,7 +73,6 @@ def master(run, nworkers):
         data = comm.recv(source=MPI.ANY_SOURCE, status=status)
         tag = status.Get_tag()
         if tag == 0:
-            _ = comm.recv(source=source, tag=tag)
             active_workers -= 1
             print('Worker finished')
         else:
