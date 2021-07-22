@@ -1,6 +1,6 @@
 import psana
 import numpy as np
-from algorithms import cfd
+from algorithms import cfd, find_droplets
 
 def process_waveform(evt, config):
     det = config['det']
@@ -8,19 +8,13 @@ def process_waveform(evt, config):
     if wf is None:
         return [np.zeros(0, dtype=np.float32) for c in config['channels']]
     taxis = det.wftime(evt)
-    peaks = [cfd(taxis[c], wf[c], config['fraction'], config['delay'], config['threshold'], 61).astype(np.float32) for c in config['channels']]
+    peaks = [cfd(taxis[c], wf[c], config['fraction'], config['delay'], config['threshold'], 21).astype(np.float32) for c in config['channels']]
     return peaks
 
 class QuadAnodeDLD:
     def __init__(self, dld_config, mcp_config):
         self.dld_config = dld_config
         self.mcp_config = mcp_config
-        
-    def get_detectors(self):
-        name = self.dld_config['det']
-        self.dld_config['det'] = psana.Detector(name)
-        name = self.mcp_config['det']
-        self.mcp_config['det'] = psana.Detector(name)
         
     def process_event(self, evt, batch):
         peaks = process_waveform(evt, self.dld_config)
@@ -36,22 +30,66 @@ class QuadAnodeDLD:
         batch.add_data('mcp_counts', peaks.size)
         batch.add_data('mcp_peaks', peaks)
         
-'''
 class VonHamos:
-    def __init__(self, config):
+    def __init__(self, config, run):
         self.config = config
+        self.mask = self.config['det'].mask(run, calib=True, status=True, edges=True, central=True)
         
-    def get_detectors(self):
-        self.det = psana.Detector(config['det'])
+    def missing_values(self, batch):
+        batch.add_data('ndroplets', 0)
+        batch.add_data('x', np.zeros(0, dtype=np.float32))
+        batch.add_data('y', np.zeros(0, dtype=np.float32))
+        batch.add_data('adu', np.zeros(0, dtype=np.float32))
         
     def process_event(self, evt, batch):
-        img = self.det.calib(evt)
+        img = self.config['det'].calib(evt)
         if img is None:
-            
+            print 'Missing detector in VonHamos'
+            self.missing_values(batch)
+            return
+        img *= self.mask
+        img = np.squeeze(img) # remove leading dimension with size 1 of jungfrau
         ndroplets, x, y, adu = find_droplets(img, self.config['seed_threshold'], self.config['join_threshold'])
         if ndroplets > 0:
             batch.add_data('ndroplets', ndroplets)
             batch.add_data('x', x)
             batch.add_data('y', y)
             batch.add_data('adu', adu)
-'''             
+        else:
+            self.missing_values(batch)
+
+
+class VonHamosNoDroplet:
+    def __init__(self, config, run):
+        self.config = config
+        self.mask = self.config['det'].mask(run, status=True, edges=True, central=True)
+        
+    def missing_values(self, batch):
+        batch.add_data('ndroplets', 0)
+        batch.add_data('x', np.zeros(0, dtype=np.float32))
+        batch.add_data('y', np.zeros(0, dtype=np.float32))
+        batch.add_data('adu', np.zeros(0, dtype=np.float32))
+        
+    def process_event(self, evt, batch):
+        img = self.config['det'].calib(evt)
+        if img is None:
+            print 'Missing detector in VonHamos'
+            self.missing_values(batch)
+            return
+        img *= self.mask
+        img = np.squeeze(img)
+        
+        #img[:, :250] = 0.0
+        ind = np.where(img > self.config['threshold'])
+        
+        if ind:
+            x, y = ind
+            npixels = x.shape[0]
+            adu = img[ind]
+            batch.add_data('ndroplets', npixels)
+            batch.add_data('x', x)
+            batch.add_data('y', y)
+            batch.add_data('adu', adu)
+        else:
+            self.missing_values(batch)
+            

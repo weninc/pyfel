@@ -20,9 +20,27 @@ def find_droplets(img, seed_threshold, join_threshold):
         x = np.array(x, dtype=np.float32)
         y = np.array(y, dtype=np.float32)
     else:
-        adu, x, y, = None, None, None
+        adu, x, y = None, None, None
     return ndroplets, x, y, adu
 
+import scipy.ndimage.measurements as smt
+
+def find_blobs(img, threshold, min_sum):
+    blobs, nblobs = smt.label(img > threshold)
+    if nblobs > 0:
+        index = np.arange(1, nblobs+1)
+        adu_sum = smt.sum(img, blobs, index)
+        x, y = zip(*smt.center_of_mass(img, blobs, index))
+        x = np.array(x, dtype=np.float32)
+        y = np.array(y, dtype=np.float32)
+        ind, = np.where(adu_sum > min_sum)
+        nblobs = ind.size
+        adu_sum = adu_sum[ind]
+        x = x[ind]
+        y = y[ind]
+    else:
+        x, y, adu_sum = None, None, None
+    return nblobs, x, y, adu_sum
 
 # Constant-Fraction Discriminator to find peaks in waveforms
 def cfd(taxis, signal, fraction, delay, threshold, filter_length):
@@ -37,7 +55,7 @@ def cfd(taxis, signal, fraction, delay, threshold, filter_length):
     good_ind, = np.where(signal[ind] < -threshold)
     pos = ind[good_ind]
     
-    # linear interpolation to find exact zero crossing
+    # linear interpolation to find more precise zero crossing
     # y = y0 + (x - x0) * m  -->  x = x0 - y0/m
     dt = taxis[1] - taxis[0]
     m = (bipolar[pos+1] - bipolar[pos]) / dt
